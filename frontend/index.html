@@ -215,8 +215,27 @@
       }
     }
   </style>
+    <style>
+      .credit {
+        position: fixed;
+        top: 14px;
+        right: 18px;
+        color: var(--ink-soft);
+        font-size: 0.95rem;
+        font-weight: 600;
+        background: rgba(255,255,255,0.6);
+        padding: 6px 10px;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        backdrop-filter: blur(4px);
+        z-index: 1000;
+      }
+    </style>
+  <!-- PDF.js from CDN for fast client-side extraction -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
 </head>
 <body>
+  <div class="credit">by rishabh jain</div>
   <main class="container">
     <h1>Resume Analyzer</h1>
     <p class="subtitle">Upload your resume and get a quick score, what to keep, and what to improve.</p>
@@ -265,7 +284,86 @@
   </main>
 
   <script>
-    const apiBase = "https://resume-analyzer-3-5vf8.onrender.com";
+    const API_BASES = [
+      "http://127.0.0.1:8000"
+    ];
+
+    async function fetchWithTimeout(url, options = {}, timeoutMs = 90000) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetch(url, { ...options, signal: controller.signal });
+        return response;
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    }
+
+    function buildFormData(file) {
+      const formData = new FormData();
+      formData.append("file", file);
+      return formData;
+    }
+
+    let ACTIVE_BASE = null;
+
+    async function probeBackends() {
+      for (const base of API_BASES) {
+        try {
+          const resp = await fetchWithTimeout(`${base}/`, {}, 4000);
+          if (resp && resp.ok) {
+            ACTIVE_BASE = base;
+            setStatus(`Connected to backend: ${base}`);
+            return base;
+          }
+        } catch (e) {
+          // continue
+        }
+      }
+      ACTIVE_BASE = null;
+      setStatus('No backend reachable yet. Frontend will try fallbacks on upload.', true);
+      return null;
+    }
+
+    async function analyzeWithFallback(file) {
+      // If we probed and found a working base, use it directly
+      if (ACTIVE_BASE) {
+        try {
+          const response = await fetchWithTimeout(`${ACTIVE_BASE}/analyze`, {
+            method: 'POST',
+            body: buildFormData(file)
+          }, 90000);
+          if (!response.ok) throw new Error(`Server error (${response.status}) from ${ACTIVE_BASE}`);
+          const data = await response.json();
+          return { data, base: ACTIVE_BASE };
+        } catch (err) {
+          // clear ACTIVE_BASE and fall through to full fallback
+          ACTIVE_BASE = null;
+        }
+      }
+
+      let lastError = null;
+      for (const base of API_BASES) {
+        try {
+          const response = await fetchWithTimeout(`${base}/analyze`, {
+            method: "POST",
+            body: buildFormData(file)
+          }, 90000);
+
+          if (!response.ok) {
+            throw new Error(`Server error (${response.status}) from ${base}`);
+          }
+
+          const data = await response.json();
+          ACTIVE_BASE = base;
+          return { data, base };
+        } catch (error) {
+          lastError = error;
+        }
+      }
+
+      throw lastError || new Error("No backend available.");
+    }
 
     function setStatus(message, isError = false) {
       const status = document.getElementById("status");
@@ -295,23 +393,37 @@
         return;
       }
 
-      const formData = new FormData();
-      formData.append("file", file);
-
+      // UI state
       button.disabled = true;
-      setStatus("Analyzing your resume...");
+      const prevText = button.textContent;
+      button.textContent = "Uploading...";
+      setStatus("Uploading resume...");
+
+      // Ensure we probed backends first (non-blocking if already set)
+      if (ACTIVE_BASE === null) {
+        // probe but don't await too long
+        probeBackends();
+      }
 
       try {
-        const response = await fetch(`${apiBase}/analyze`, {
-          method: "POST",
-          body: formData
-        });
-
-        if (!response.ok) {
-          throw new Error(`Server error (${response.status}).`);
+        // Try fast client-side extraction first
+        let data, base;
+        try {
+          setStatus('Extracting text in browser...');
+          const extracted = await extractTextFromPDF(file);
+          if (extracted && extracted.length > 50) {
+            const res = await analyzeTextWithFallback(extracted);
+            data = res.data; base = res.base;
+          } else {
+            // fall back to full file upload
+            const res = await analyzeWithFallback(file);
+            data = res.data; base = res.base;
+          }
+        } catch (err) {
+          // client extraction failed; fallback to upload
+          const res = await analyzeWithFallback(file);
+          data = res.data; base = res.base;
         }
-
-        const data = await response.json();
 
         document.getElementById("scoreNumber").textContent = `${data.score ?? 0}%`;
         // render compact breakdown
@@ -333,12 +445,56 @@
         document.getElementById("tips").textContent = data.suggestions || "Improve your wording with clear outcomes and measurable achievements.";
 
         document.getElementById("results").style.display = "grid";
-        setStatus("Analysis complete.");
+        setStatus(`Analysis complete. Connected to ${base}.`);
       } catch (error) {
-        setStatus(`Could not analyze resume: ${error.message}`, true);
+        if (error.name === "AbortError") {
+          setStatus("Could not analyze resume: request timed out after 90s on all backends.", true);
+        } else if (error.message === "Failed to fetch") {
+          setStatus("Could not analyze resume: all backends unreachable. Start local backend on http://127.0.0.1:8000.", true);
+        } else {
+          setStatus(`Could not analyze resume: ${error.message}`, true);
+        }
       } finally {
         button.disabled = false;
+        button.textContent = prevText;
       }
+    }
+
+    // Client-side PDF text extraction (first page(s)) using PDF.js
+    async function extractTextFromPDF(file) {
+      if (!window.pdfjsLib) throw new Error('PDF.js not available');
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
+      const arrayBuffer = await file.arrayBuffer();
+      const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+      const pdf = await loadingTask.promise;
+      const maxPages = 1;
+      let fullText = '';
+      for (let i = 1; i <= Math.min(pdf.numPages, maxPages); i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        const strings = content.items.map(item => item.str || '').join(' ');
+        fullText += '\n' + strings;
+      }
+      return fullText.trim();
+    }
+
+    async function analyzeTextWithFallback(text) {
+      let lastError = null;
+      for (const base of API_BASES) {
+        try {
+          const resp = await fetchWithTimeout(`${base}/analyze-text`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text })
+          }, 90000);
+          if (!resp.ok) throw new Error(`Server error (${resp.status}) from ${base}`);
+          const data = await resp.json();
+          return { data, base };
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw lastError || new Error('No backend available for text analysis.');
     }
   </script>
 </body>

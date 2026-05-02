@@ -1,19 +1,59 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+import uuid
+import tempfile
+import os
+import threading
 import pdfplumber
 import re
+from pydantic import BaseModel
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 REQUIRED_SKILLS = ["python", "sql", "machine learning", "data analysis", "excel"]
+MAX_PAGES_TO_SCAN = 1
+MAX_TEXT_CHARS = 20000
+
+# In-memory job store for background processing
+JOBS = {}
+
+
+def extract_text_fast(pdf_source):
+    text_parts = []
+    with pdfplumber.open(pdf_source) as pdf:
+        for page in pdf.pages[:MAX_PAGES_TO_SCAN]:
+            text_parts.append(page.extract_text() or "")
+
+    combined = "\n".join(text_parts).lower()
+    return combined[:MAX_TEXT_CHARS]
+
+
+def build_analysis_result(text):
+    found_skills = [skill for skill in REQUIRED_SKILLS if skill in text]
+    missing_skills = [skill for skill in REQUIRED_SKILLS if skill not in text]
+
+    breakdown = compute_score_and_breakdown(text, found_skills)
+    score = breakdown.get("total", 0)
+    mandatory_changes = build_mandatory_changes(missing_skills)
+    job_advice = build_job_advice(score, found_skills, missing_skills)
+
+    return {
+        "score": score,
+        "score_breakdown": breakdown,
+        "found_skills": found_skills,
+        "missing_skills": missing_skills,
+        "mandatory_changes": mandatory_changes,
+        "job_advice": job_advice,
+        "suggestions": "Prioritize missing skills, quantify your impact, and tailor your resume for each target role."
+    }
 
 
 def build_mandatory_changes(missing_skills):
@@ -131,31 +171,62 @@ def compute_score_and_breakdown(text, found_skills):
 def home():
     return {"message": "API is working"}
 
+
+class TextPayload(BaseModel):
+    text: str
+
+
+@app.post("/analyze-text")
+async def analyze_text(payload: TextPayload):
+    text = (payload.text or "").lower()[:MAX_TEXT_CHARS]
+    return build_analysis_result(text)
+
 @app.post("/analyze")
 async def analyze_resume(file: UploadFile = File(...)):
-    text = ""
+    text = extract_text_fast(file.file)
+    return build_analysis_result(text)
 
-    with pdfplumber.open(file.file) as pdf:
-        for page in pdf.pages:
-            text += page.extract_text() or ""
 
-    text = text.lower()
+def _process_file_and_store(job_id: str, file_path: str):
+    try:
+        text = extract_text_fast(file_path)
+        result = build_analysis_result(text)
 
-    found_skills = [skill for skill in REQUIRED_SKILLS if skill in text]
-    missing_skills = [skill for skill in REQUIRED_SKILLS if skill not in text]
+        JOBS[job_id]["status"] = "completed"
+        JOBS[job_id]["result"] = result
+    except Exception as e:
+        JOBS[job_id]["status"] = "error"
+        JOBS[job_id]["error"] = str(e)
+    finally:
+        try:
+            os.remove(file_path)
+        except Exception:
+            pass
 
-    # compute improved score breakdown
-    breakdown = compute_score_and_breakdown(text, found_skills)
-    score = breakdown.get("total", 0)
-    mandatory_changes = build_mandatory_changes(missing_skills)
-    job_advice = build_job_advice(score, found_skills, missing_skills)
 
-    return {
-        "score": score,
-        "score_breakdown": breakdown,
-        "found_skills": found_skills,
-        "missing_skills": missing_skills,
-        "mandatory_changes": mandatory_changes,
-        "job_advice": job_advice,
-        "suggestions": "Prioritize missing skills, quantify your impact, and tailor your resume for each target role."
-    }
+@app.post("/analyze-async")
+async def analyze_resume_async(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    # Save upload to a temporary file and schedule background processing
+    job_id = str(uuid.uuid4())
+    tmp_dir = tempfile.gettempdir()
+    tmp_path = os.path.join(tmp_dir, f"resume_{job_id}.pdf")
+
+    with open(tmp_path, "wb") as out:
+        content = await file.read()
+        out.write(content)
+
+    JOBS[job_id] = {"status": "queued"}
+
+    # Use a thread so heavy pdf processing doesn't block the event loop
+    thread = threading.Thread(target=_process_file_and_store, args=(job_id, tmp_path))
+    thread.start()
+
+    return {"job_id": job_id, "status": "queued"}
+
+
+@app.get("/jobs/{job_id}")
+async def get_job(job_id: str):
+    job = JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
