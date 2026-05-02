@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Resume Analyzer</title>
+  <style>
+    :root {
+      --bg-start: #f4efe4;
+      --bg-end: #f8fafb;
+      --ink: #1f2a2e;
+      --ink-soft: #4a5a61;
+      --panel: rgba(255, 255, 255, 0.88);
+      --line: rgba(31, 42, 46, 0.1);
+      --good: #2f7d52;
+      --warn: #d97706;
+      --accent: #0f6d72;
+      --accent-2: #eb5e28;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 15% 20%, rgba(235, 94, 40, 0.18), transparent 40%),
+        radial-gradient(circle at 85% 10%, rgba(15, 109, 114, 0.22), transparent 45%),
+        linear-gradient(145deg, var(--bg-start), var(--bg-end));
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+
+    .container {
+      width: min(920px, 100%);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      backdrop-filter: blur(6px);
+      padding: 24px;
+      box-shadow: 0 18px 40px rgba(18, 37, 45, 0.14);
+      animation: liftIn 500ms ease;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(1.6rem, 2.5vw, 2.1rem);
+      letter-spacing: 0.2px;
+    }
+
+    .subtitle {
+      margin: 8px 0 18px;
+      color: var(--ink-soft);
+    }
+
+    .upload-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .file-input {
+      padding: 10px;
+      border: 1px dashed var(--line);
+      border-radius: 12px;
+      background: #ffffffcc;
+      min-width: 260px;
+      flex: 1;
+    }
+
+    .button {
+      border: 0;
+      border-radius: 12px;
+      padding: 11px 16px;
+      cursor: pointer;
+      font-weight: 600;
+      color: #fff;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      transition: transform 150ms ease, box-shadow 150ms ease;
+      box-shadow: 0 8px 16px rgba(15, 109, 114, 0.25);
+    }
+
+    .button:hover {
+      transform: translateY(-1px);
+    }
+
+    .button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .status {
+      margin-top: 10px;
+      min-height: 22px;
+      color: var(--ink-soft);
+      font-size: 0.95rem;
+    }
+
+    .results {
+      margin-top: 20px;
+      display: none;
+      gap: 12px;
+    }
+
+    .score-card {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .score-number {
+      font-size: clamp(2rem, 5vw, 2.6rem);
+      line-height: 1;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px;
+      background: #fff;
+    }
+
+    .card h3 {
+      margin: 0 0 10px;
+      font-size: 1rem;
+    }
+
+    .keep h3 {
+      color: var(--good);
+    }
+
+    .change h3 {
+      color: var(--warn);
+    }
+
+    .mandatory h3 {
+      color: #b42318;
+    }
+
+    .job h3 {
+      color: #0f6d72;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--ink-soft);
+    }
+
+    li + li {
+      margin-top: 6px;
+    }
+
+    .tips {
+      margin-top: 12px;
+      border-left: 3px solid var(--accent-2);
+      padding: 10px 12px;
+      background: rgba(235, 94, 40, 0.08);
+      border-radius: 8px;
+      color: var(--ink);
+    }
+
+    .breakdown {
+      margin-top: 12px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .breakdown .dot {
+      padding: 6px 8px;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      font-size: 0.9rem;
+      color: var(--ink-soft);
+    }
+
+    @keyframes liftIn {
+      from {
+        transform: translateY(8px);
+        opacity: 0;
+      }
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <h1>Resume Analyzer</h1>
+    <p class="subtitle">Upload your resume and get a quick score, what to keep, and what to improve.</p>
+
+    <div class="upload-row">
+      <input class="file-input" type="file" id="fileInput" accept=".pdf">
+      <button class="button" id="analyzeBtn" onclick="uploadResume()">Analyze Resume</button>
+    </div>
+
+    <div id="status" class="status"></div>
+
+    <section id="results" class="results">
+      <article class="score-card">
+        <div>
+          <div style="font-weight: 600;">Resume Match Score</div>
+          <div style="color: var(--ink-soft); font-size: 0.95rem;">Based on detected required skills</div>
+        </div>
+        <div id="scoreNumber" class="score-number">0%</div>
+      </article>
+      <div class="breakdown" id="scoreBreakdown"></div>
+
+      <div class="grid">
+        <article class="card keep">
+          <h3>What You Should Keep</h3>
+          <ul id="keepList"></ul>
+        </article>
+
+        <article class="card change">
+          <h3>What You Should Change / Add</h3>
+          <ul id="changeList"></ul>
+        </article>
+
+        <article class="card mandatory">
+          <h3>Mandatory Changes For Better Job Chances</h3>
+          <ul id="mandatoryList"></ul>
+        </article>
+
+        <article class="card job">
+          <h3>Job Advice</h3>
+          <ul id="jobAdviceList"></ul>
+        </article>
+      </div>
+
+      <div id="tips" class="tips"></div>
+    </section>
+  </main>
+
+  <script>
+    const apiBase = "http://127.0.0.1:8000";
+
+    function setStatus(message, isError = false) {
+      const status = document.getElementById("status");
+      status.textContent = message;
+      status.style.color = isError ? "#b42318" : "var(--ink-soft)";
+    }
+
+    function fillList(elementId, values, emptyMessage) {
+      const list = document.getElementById(elementId);
+      list.innerHTML = "";
+      const entries = values && values.length ? values : [emptyMessage];
+
+      entries.forEach((entry) => {
+        const item = document.createElement("li");
+        item.textContent = entry;
+        list.appendChild(item);
+      });
+    }
+
+    async function uploadResume() {
+      const input = document.getElementById("fileInput");
+      const button = document.getElementById("analyzeBtn");
+      const file = input.files[0];
+
+      if (!file) {
+        setStatus("Please choose a PDF resume first.", true);
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      button.disabled = true;
+      setStatus("Analyzing your resume...");
+
+      try {
+        const response = await fetch(`${apiBase}/analyze`, {
+          method: "POST",
+          body: formData
+        });
+
+        if (!response.ok) {
+          throw new Error(`Server error (${response.status}).`);
+        }
+
+        const data = await response.json();
+
+        document.getElementById("scoreNumber").textContent = `${data.score ?? 0}%`;
+        // render compact breakdown
+        const breakdownEl = document.getElementById("scoreBreakdown");
+        breakdownEl.innerHTML = "";
+        if (data.score_breakdown) {
+          const keys = ["skills","experience","achievements","projects","education"];
+          keys.forEach(k => {
+            const d = document.createElement('div');
+            d.className = 'dot';
+            d.textContent = `${k}: ${data.score_breakdown[k]}%`;
+            breakdownEl.appendChild(d);
+          });
+        }
+        fillList("keepList", data.found_skills, "No matching skills found yet.");
+        fillList("changeList", data.missing_skills, "Great job. No missing target skills.");
+        fillList("mandatoryList", data.mandatory_changes, "No mandatory changes detected.");
+        fillList("jobAdviceList", data.job_advice, "Continue applying with role-specific customization.");
+        document.getElementById("tips").textContent = data.suggestions || "Improve your wording with clear outcomes and measurable achievements.";
+
+        document.getElementById("results").style.display = "grid";
+        setStatus("Analysis complete.");
+      } catch (error) {
+        setStatus(`Could not analyze resume: ${error.message}`, true);
+      } finally {
+        button.disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>
