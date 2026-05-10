@@ -1,3 +1,4 @@
+![Poster](poster.png)
 # resume-analyzer
 link "[resume-analyzer-flame-pi.vercel.app](https://resume-analyzer-flame-pi.vercel.app/)"
 # 📄 AI Resume Analyzer (Full-Stack Web Application)
@@ -10,8 +11,8 @@ AI Resume Analyzer is a full-stack web application that analyzes resumes and pro
 
 ## 🌐 Live Application
 
-👉 https://resume-analyzer-flame-pi.vercel.app/
-
+🌐 Live Demo: [Resume Analyzer](https://resume-analyzer-flame-pi.vercel.app/)
+⚡ Backend API: [Render Backend](https://resume-analyzer-5-y1g2.onrender.com)
 ---
 
 ## 📂 GitHub Repository
